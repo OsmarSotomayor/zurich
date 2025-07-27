@@ -9,32 +9,49 @@ on:
     branches:
       - master
 
+env:
+  NODE_VERSION: '20.x'  # Angular 19 requiere Node 18+
+
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4  # Actualizado a v4
         with:
-          submodules: true
-          lfs: false
-      
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
       - name: Install dependencies
-        run: npm install
-      
-      - name: Build Angular app
-        run: npm run build -- --output-path=dist/browser --configuration production
-      
-      # Paso de verificación CRUCIAL (añadido aquí)
-      - name: Verificar estructura de archivos
         run: |
-          echo "=== Estructura de dist ==="
-          ls -R dist
-          echo "=== Contenido de dist/browser ==="
-          ls -lh dist/browser
-          [ -f "dist/browser/index.html" ] && echo "✅ Index.html encontrado" || echo "❌ Index.html NO existe"
-      
+          npm ci
+          npm install -g @angular/cli@latest
+
+      - name: Build Angular app
+        run: |
+          rm -rf dist
+          ng build --configuration production --output-path=dist/azure-deploy
+          
+          # Mover archivos a la estructura que Azure espera
+          mkdir -p dist/deploy-ready
+          cp -r dist/azure-deploy/browser/* dist/deploy-ready/
+          cp src/staticwebapp.config.json dist/deploy-ready/
+
+      - name: Verify build structure
+        run: |
+          echo "=== Estructura generada ==="
+          ls -R dist/azure-deploy
+          echo "=== Estructura lista para deploy ==="
+          ls -R dist/deploy-ready
+          [ -f "dist/deploy-ready/index.html" ] || (echo "❌ Error: index.html no encontrado" && exit 1)
+
       - name: Deploy to Azure Static Web Apps
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -42,10 +59,10 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_GREEN_RIVER_01744AF0F }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "/"
+          app_location: "dist/deploy-ready"  # Cambiado a la nueva ruta
           api_location: ""
-          output_location: "dist/browser"
-          skip_app_build: true  # Importante: Ya hicimos el build manualmente
+          output_location: ""  # Ahora vacío porque app_location apunta al destino final
+          skip_app_build: true
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
